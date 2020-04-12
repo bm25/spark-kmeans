@@ -38,6 +38,10 @@ class StackOverflowSuite {
     assert(instantiatable, "Can't instantiate a StackOverflow object")
   }
 
+  @Test def `firstLangInTag should find JavaScript`: Unit = {
+    val langIdx  = testObject.firstLangInTag(Some("JavaScript"), StackOverflow.langs)
+    assert(langIdx.filter(_ == 0).nonEmpty, "firstLangInTag can't find presented lang")
+  }
 
   @Rule def individualTestTimeout = new org.junit.rules.Timeout(100 * 1000)
 }
