@@ -25,9 +25,9 @@ object StackOverflow extends StackOverflow {
     val raw     = rawPostings(lines)
     val grouped = groupedPostings(raw)
     //Call sample(true, 0.1, 0) on scoredPostings(grouped) to downsample initial points
-    val scored  = scoredPostings(grouped)// TODO: Test that scored RDD has 2121822 entries
+    val scored  = scoredPostings(grouped).sample(true, 0.1, 0)// TODO: Test that scored RDD has 2121822 entries
     val vectors = vectorPostings(scored)
-    assert(vectors.count() == 2121822, "Incorrect number of vectors: " + vectors.count())
+    assert(vectors.count() == 213060, "Incorrect number of vectors: " + vectors.count())//full feed = 2121822, test feed = 213060
 
     val means   = kmeans(sampleVectors(vectors), vectors, debug = true)//run kMeans algorithm with initial points (means) returned by sampleVectors()
     val results = clusterResults(means, vectors)
@@ -351,26 +351,44 @@ class StackOverflow extends StackOverflowInterface with Serializable {
     val closest = vectors.map(p => (findClosest(p, means), p))
     val closestGrouped = closest.groupByKey()//RDD[( ClosestPointIdxInt, Iterable[(LangIndex, HighScore)] )]
 
-    val median = closestGrouped.mapValues { vs =>
-      val mostCommonLangIdx: LangIndex = vs.groupBy(_._1)
-        .mapValues(_.size)
-        .maxBy(_._2)
-        ._1
+    val clustersInfo = closestGrouped.mapValues { vs => computingClusterDetails(vs) }
 
-      val langLabel: String   = langs(mostCommonLangIdx)// most common language in the cluster
-    val clusterSize: Int    = vs.size
-      val langPercent: Double = vs
-        .filter(lang => lang._1 == mostCommonLangIdx)
-        .size/clusterSize// percent of the questions in the most common language
+    clustersInfo.collect().map(_._2).sortBy(_._4)
+  }
 
-      val medianScore: Int    = vs.map(x => x._2)
-        .toIterator
-        .foldLeft((0.0, 1)) { case ((avg, idx), next) => (avg + (next - avg)/idx, idx + 1) }._1.toInt
+  def computingClusterDetails(clusterVectors: Iterable[(LangIndex, HighScore)]): (String, Double, Int, Int) = {
+    println("computingClusterDetails:  clusterVectors.size =" + clusterVectors.size)
 
-      (langLabel, langPercent, clusterSize, medianScore)
-    }
+    val mostCommonLangIdx: LangIndex = clusterVectors.groupBy(_._1)
+      .mapValues(_.size)
+      .maxBy(_._2)
+      ._1
 
-    median.collect().map(_._2).sortBy(_._4)
+    val encodedMostCommonLangIdx = mostCommonLangIdx / langSpread
+    println("computingClusterDetails: encodedMostCommonLangIdx =" + encodedMostCommonLangIdx)
+
+
+    val langLabel: String   = langs(encodedMostCommonLangIdx)// most common language in the cluster
+    println("computingClusterDetails: langLabel =" + langLabel)
+
+    val clusterSize: Int    = clusterVectors.size
+    println("computingClusterDetails: clusterSize =" + clusterSize)
+
+    val langPercent: Double = (clusterVectors
+      .filter(lang => lang._1 == mostCommonLangIdx)
+      .size/clusterSize) * 100// percent of the questions in the most common language
+    println("computingClusterDetails: langPercent =" + langPercent)
+
+    val medianScore: Int = getMedian(clusterVectors, clusterSize)
+
+      /*
+      clusterVectors.map(x => x._2)
+      .toIterator
+      .foldLeft((0.0, 1)) { case ((avg, idx), next) => (avg + (next - avg)/idx, idx + 1) }._1.toInt
+       */
+    println("computingClusterDetails: medianScore =" + medianScore)
+
+    (langLabel, langPercent, clusterSize, medianScore)
   }
 
   def printResults(results: Array[(String, Double, Int, Int)]): Unit = {
@@ -379,5 +397,14 @@ class StackOverflow extends StackOverflowInterface with Serializable {
     println("================================================")
     for ((lang, percent, size, score) <- results)
       println(f"${score}%7d  ${lang}%-17s (${percent}%-5.1f%%)      ${size}%7d")
+  }
+
+  def getMedian(vectors: Iterable[(LangIndex, HighScore)], size: Int): Int  =
+  {
+    val (lower, upper) = vectors.map(_._2).toList.sortWith(_<_).splitAt(size / 2)
+    if (size % 2 == 0)
+      (lower.last + upper.head) / 2
+    else
+      upper.head
   }
 }
